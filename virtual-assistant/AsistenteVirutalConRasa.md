@@ -1042,7 +1042,331 @@ stories:
 
 ### Conversaciones contextuales
 
+// TODO
 
+## Conceptos
+
+### Acciones personalizadas
+
+Las acciones personalizadas o `custom actions` nos permiten gestionar la respuesta al usuario y dentro de esa gestión tenemos la posibilidad de integración con elementos de backend como bases de datos o APIs.
+
+Las acciones personalizadas tienen que extender la clase del SDK Action. Esta clase tiene dos métodos predefinidos que podremos sobrescribir.
+
+```python
+class MyCustomAction(Action):
+
+    def name(self) -> Text:
+
+        return "action_name"
+
+    async def run(
+        self, dispatcher, tracker: Tracker, domain: Dict[Text, Any],
+    ) -> List[Dict[Text, Any]]:
+
+        return []
+```
+
+El método `name()` devuelve el nombre de la acción utilizada en la configuración del dominio y el método asíncrono `run()` es el responsable de ejecutar la acción que retornará la respuesta al usuario. Este método recibe tres parámetros:
+
+- dispatcher: se utiliza para devolver la respuesta al usuario.
+- tracker: nos da acceso al seguimiento del dialogo. A través de él podemos acceder a los slots y a los últimos mensajes, entre otros.
+- domain: representa el dominio del robot.
+
+Por último el método `run()` devuelve una lista de eventos.
+
+Veamos un ejemplo aplicado al asistente de restaurantes.
+
+```python
+from typing import Text, Dict, Any, List
+from rasa_sdk import Action
+from rasa_sdk.events import SlotSet
+
+class ActionCheckRestaurants(Action):
+   def name(self) -> Text:
+      return "action_check_restaurants"
+
+   def run(self,
+           dispatcher: CollectingDispatcher,
+           tracker: Tracker,
+           domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+
+      cuisine = tracker.get_slot('cuisine')
+      q = "select * from restaurants where cuisine='{0}' limit 1".format(cuisine)
+      result = db.query(q)
+
+      return [SlotSet("matches", result if result is not None else [])]
+```
+
+#### Tracker
+
+El objeto trace nos permite obtener los siguientes atributos de la conversación.
+
+- `sender_id` - El ID unico del usuario.
+- `slots` - la lista de slots.
+- `latest_message` - el último mensaje del usuario: `intent`, `entities` y `text`.
+- `events` - La lista de eventos previos.
+- `active_loop` - El nombre del formulario activo.
+- `latest_action_name` - La última acción ejecutada.
+
+#### Dispatcher
+
+El componente `Dispatcher` permite devolver respuestas al usuario, sin utilizar eventos, como se hace en el siguiente caso. 
+
+```python
+class ActionGreetUser(Action):
+    def name(self) -> Text:
+        return "action_greet_user"
+
+    async def run(
+        self,
+        dispatcher: CollectingDispatcher,
+        tracker: Tracker,
+        domain: Dict[Text, Any],
+    ) -> List[EventType]:
+
+        dispatcher.utter_message(text = "Hi, User!")
+
+        return []
+```
+
+Además de texto podemos enviar otros tipos de datos, veamos los uno a uno:
+
+* `text`: un mensaje de texto.
+
+* `image`: una imagen o URL cuyo resultado lo sea.
+
+* `json_message`: un objeto json entendible por el canal al que va dirigido.
+
+* `template`: una respuesta definida en el dominio.
+
+* `attachment`: una URL.
+
+* `buttons`: una lista de botones para respuesta del usuario con payloads.
+
+  ```python
+  dispatcher.utter_messsage(buttons = [
+                  {"payload": "/affirm", "title": "Yes"},
+                  {"payload": "/deny", "title": "No"},
+              ]
+  ```
+
+* `elements`: sólo para Facebook.
+
+* `**kwargs`: argumentos para interpolar en una plantilla.
+
+  ```yaml
+  ## domain.yml
+  ## ----------
+  responses:
+    utter_greet_name:
+    - text: Hi {name}!
+  ```
+
+  ```python
+  dispatcher.utter_message(template = "utter_greet_name", name = "Aimee")
+  ```
+
+#### Eventos
+
+// TODO
+
+Las conversaciones en Rasa se representan con una lista de eventos. Rasa define todos los tipos de eventos necesarios en su SDK. Veamos los en detalle.
+
+* SlotSet: permite establecer el valor de un slot.
+* AllSlotReset: re-establece todos los valores.
+* ReminderScheduled: 
+* ConversationPaused
+* ConversationResumed
+* FollowupAction
+* UserUtteranceReverted
+* ActionReverted
+* Restarted
+* SessionStarted
+* UsserUttered
+* BotUttered
+* ActionExecuted
+
+#### Knowledge Base Actions
+
+Esta funcionalidad permite a Rasa acceder a información de la Knowledge Base y utilizarla en los diálogos con los usuarios. 
+
+Un ejemplo de este tipo de conversación podría ser:
+
+```pseudocode
+usuario>  Hola
+bot> hola, cómo estás?
+usuario$ bien. ¿Podrías darme la lista de restaurantes de 3 estrellas michelin de Madrid?
+bot> Si, esta es la lista:
+1. Tortilla Alegre.
+2. Mojito Feliz.
+3. Cachopo Perez.
+usuario> ¿Que tipo de cocina hace Mojito Feliz?
+bot> Cocina madrileña
+...
+```
+
+Es imposible crear un modelo que maneje este tipo de conversación a través de ejemplos e historias. Además esta información puede ser dinámica y variar con el tiempo. Podemos ver un ejemplo de uso de este tipo de asistentes en [knowledgebasebot](https://github.com/RasaHQ/rasa/tree/main/examples/knowledgebasebot).
+
+Para la Implementación de estos tipos de dialogo utilizaremos `ActionQueryKnowledgeBase`. El primer paso es configurar la fuente de nuestro conocimiento. Una forma sencilla de hacerlo es utilizar `InMemoryNowledgeBase`. Este componente nos permite utilizar un fichero `data.json` como `knowledge base`. Cada objeto debe tener al menos un atributo `id` y otro `name`.
+
+```json
+{
+    "restaurant": [
+        {
+            "id": 0,
+            "name": "Donath",
+            "cuisine": "Italian",
+            "outside-seating": true,
+            "price-range": "mid-range"
+        },
+        {
+            "id": 1,
+            "name": "Berlin Burrito Company",
+            "cuisine": "Mexican",
+            "outside-seating": false,
+            "price-range": "cheap"
+        },
+        {
+            "id": 2,
+            "name": "I due forni",
+            "cuisine": "Italian",
+            "outside-seating": true,
+            "price-range": "mid-range"
+        }
+    ],
+    "hotel": [
+        {
+            "id": 0,
+            "name": "Hilton",
+            "price-range": "expensive",
+            "breakfast-included": true,
+            "city": "Berlin",
+            "free-wifi": true,
+            "star-rating": 5,
+            "swimming-pool": true
+        },
+        {
+            "id": 1,
+            "name": "Hilton",
+            "price-range": "expensive",
+            "breakfast-included": true,
+            "city": "Frankfurt am Main",
+            "free-wifi": true,
+            "star-rating": 4,
+            "swimming-pool": false
+        },
+        {
+            "id": 2,
+            "name": "B&B",
+            "price-range": "mid-range",
+            "breakfast-included": false,
+            "city": "Berlin",
+            "free-wifi": false,
+            "star-rating": 1,
+            "swimming-pool": false
+        },
+    ]
+}
+```
+
+El siguiente paso es definir los ejemplos para la NLU. Crearemos un nuevo intento `query_knowledge_bas`.
+
+```yaml
+nlu:
+- intent: query_knowledge_base
+  examples: |
+    - what [restaurants]{"entity": "object_type", "value": "restaurant"} can you recommend?
+    - list some [restaurants]{"entity": "object_type", "value": "restaurant"}
+    - can you name some [restaurants]{"entity": "object_type", "value": "restaurant"} please?
+    - can you show me some [restaurants]{"entity": "object_type", "value": "restaurant"} options
+    - list [German](cuisine) [restaurants]{"entity": "sobject_type", "value": "restaurant"}
+    - do you have any [mexican](cuisine) [restaurants]{"entity": "object_type", "value": "restaurant"}?
+    - do you know the [price range]{"entity": "attribute", "value": "price-range"} of [that one](mention)?
+    - what [cuisine](attribute) is [it](mention)?
+    - do you know what [cuisine](attribute) the [last one]{"entity": "mention", "value": "LAST"} has?
+    - does the [first one]{"entity": "mention", "value": "1"} have [outside seating]{"entity": "attribute", "value": "outside-seating"}?
+    - what is the [price range]{"entity": "attribute", "value": "price-range"} of [Berlin Burrito Company](restaurant)?
+    - what about [I due forni](restaurant)?
+    - can you tell me the [price range](attribute) of [that restaurant](mention)?
+    - what [cuisine](attribute) do [they](mention) have?
+```
+
+En los datos de ejemplo anotaremos con:
+
+- `object_type`: cada uno de los tipos de los datos de ejemplo: restaurante, hotel, ...
+- `mention`: las referencias a `entities` previas.
+- `attribute`: cada uno de los atributos de los objetos.
+
+Cada uno de estos elementos tiene consideración de `entity` con un `slot` asociado  y por lo tanto los tenemos que definir en el domino. 
+
+```yaml
+## domain.yml
+## ----------
+entities:
+  - object_type
+  - mention
+  - attribute
+
+slots:
+  object_type:
+    type: unfeaturized
+  mention:
+    type: unfeaturized
+  attribute:
+    type: unfeaturized
+```
+
+Nos queda crear la acción que consultará nuestra base de conocimiento. Extendemos la clase 
+
+`ActionQueryKnowledgeBase`.
+
+```python
+from rasa_sdk.knowledge_base.storage import InMemoryKnowledgeBase
+from rasa_sdk.knowledge_base.actions import ActionQueryKnowledgeBase
+
+class MyKnowledgeBaseAction(ActionQueryKnowledgeBase):
+    def __init__(self):
+        knowledge_base = InMemoryKnowledgeBase("data.json")
+        super().__init__(knowledge_base)
+```
+
+Y como siempre la añadimos al dominio.
+
+```yaml
+## domain.yml
+## ----------
+actions:
+- action_query_knowledge_base
+```
+
+Creamos una historia para el entrenamiento.
+
+```yml
+## strories.yml
+## ------------
+stories:
+- story: knowledge base happy path
+  steps:
+  - intent: greet
+  - action: utter_greet
+  - intent: utter_greet
+  - action: action_query_knowledge_base
+  - intent: goodbye
+  - action: utter_goodbye
+```
+
+Por último añadimos una respuesta de re-formulación de preguntas.
+
+```yml
+## domain.yml
+## ----------
+responses:
+  utter_ask_rephrase:
+  - text: "Sorry, I'm not sure I understand. Could you rephrase it?"
+  - text: "Could you please rephrase your message? I didn't quite get that."
+```
+
+// TODO: ¿Cómo usarlo?
 
 ## Proyecto de ejemplo
 
